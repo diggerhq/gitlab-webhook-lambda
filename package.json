@@ -1,0 +1,9 @@
+{
+  "name": "gitlab-webhook-lambda",
+  "version": "1.0.0",
+  "description": "GitLab webhook lambda",
+  "scripts": {
+    "build": "env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build  -o bin/gitlab-webhook-lambda .",
+    "deploy": "serverless deploy "
+}
+}

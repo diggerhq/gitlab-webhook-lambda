@@ -1,0 +1,24 @@
+service: gitlab
+
+provider:
+  name: aws
+  runtime: go1.x
+  memorySize: 256
+
+package:
+  patterns:
+    - "!./**"
+    - "./bin/**"
+
+functions:
+  webhook-handler:
+    handler: bin/gitlab-webhook-lambda
+    url: true
+    events:
+      - http:
+          path: /
+          method: post
+          private: false
+    environment:
+      GITLAB_TOKEN: ${ssm:/gitlab-dev-webhook-handler/dev/GITLAB_TOKEN}
+
