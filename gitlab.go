@@ -48,22 +48,22 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		fmt.Printf("event ObjectKind: %s\n", event.ObjectKind)
 		switch event.ObjectAttributes.Action {
 		case "open":
-			err := TriggerPipeline(projectId, branchName, "merge_request_opened")
+			err := TriggerPipeline(projectId, branchName, "merge_request_opened", "")
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
 		case "close":
-			err := TriggerPipeline(projectId, branchName, "merge_request_closed")
+			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "")
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
 		case "reopen":
-			err := TriggerPipeline(projectId, branchName, "merge_request_updated")
+			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "")
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
 		case "update":
-			err := TriggerPipeline(projectId, branchName, "merge_request_updated")
+			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "")
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
@@ -72,13 +72,23 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		case "approval":
 		case "unapproval":
 		case "merge":
-			err := TriggerPipeline(projectId, branchName, "merge_request_closed")
+			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "")
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
 
 		default:
 			return nil, gitlabEvent, fmt.Errorf("unknown gitlab event action %s\n", event.ObjectAttributes.Action)
+		}
+	case gitlab.EventTypeNote:
+		event := result.(*gitlab.MergeCommentEvent)
+		diggerCommand := event.ObjectAttributes.Note
+		fmt.Printf("note event: %v\n", event)
+		projectId := event.ProjectID
+		branchName := event.MergeRequest.SourceBranch
+		err := TriggerPipeline(projectId, branchName, "merge_request_commented", diggerCommand)
+		if err != nil {
+			return nil, "TriggerPipeline error", err
 		}
 	default:
 
@@ -89,7 +99,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 	return result, gitlabEvent, nil
 }
 
-func TriggerPipeline(projectId int, branchName string, eventType string) error {
+func TriggerPipeline(projectId int, branchName string, eventType string, diggerCommand string) error {
 	gitlabToken := os.Getenv("GITLAB_TOKEN")
 	if gitlabToken == "" {
 		return fmt.Errorf("GITLAB_TOKEN has not been set\n")
@@ -105,6 +115,14 @@ func TriggerPipeline(projectId int, branchName string, eventType string) error {
 		Value:        gitlab.String(eventType),
 		VariableType: gitlab.String("env_var"),
 	})
+
+	if diggerCommand != "" {
+		variables = append(variables, &gitlab.PipelineVariableOptions{
+			Key:          gitlab.String("DIGGER_COMMAND"),
+			Value:        gitlab.String(diggerCommand),
+			VariableType: gitlab.String("env_var"),
+		})
+	}
 
 	opt := &gitlab.CreatePipelineOptions{Ref: &branchName, Variables: &variables}
 

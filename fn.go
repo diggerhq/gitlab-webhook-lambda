@@ -11,7 +11,7 @@ func GenerateResponse(Body string, Code int) events.APIGatewayProxyResponse {
 	return events.APIGatewayProxyResponse{Body: Body, StatusCode: Code}
 }
 func HandleRequest(_ context.Context, request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
-	//fmt.Printf("Body: %s", request.Body)
+	fmt.Printf("Body: %s", request.Body)
 	//fmt.Printf("Headers: %v", request.Headers)
 
 	_, _, err := ParseWebHookJSON("", request)
