@@ -49,22 +49,22 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		fmt.Printf("event ObjectKind: %s\n", event.ObjectKind)
 		switch event.ObjectAttributes.Action {
 		case "open":
-			err := TriggerPipeline(projectId, branchName, "merge_request_opened", "", 0)
+			err := TriggerPipeline(projectId, branchName, "merge_request_opened", "", "", 0, 0)
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
 		case "close":
-			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "", 0)
+			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "", "", 0, 0)
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
 		case "reopen":
-			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "", 0)
+			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "", "", 0, 0)
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
 		case "update":
-			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "", 0)
+			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "", "", 0, 0)
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
@@ -73,7 +73,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		case "approval":
 		case "unapproval":
 		case "merge":
-			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "", 0)
+			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "", "", 0, 0)
 			if err != nil {
 				return nil, "TriggerPipeline error", err
 			}
@@ -83,17 +83,18 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		}
 	case gitlab.EventTypeNote:
 		event := result.(*gitlab.MergeCommentEvent)
-		diggerCommand := event.ObjectAttributes.Note
+		//diggerCommand := event.ObjectAttributes.Note
 		fmt.Printf("note event: %v\n", event)
 		projectId := event.ProjectID
 		branchName := event.MergeRequest.SourceBranch
 		mergeRequestIID := event.MergeRequest.IID
-		err := TriggerPipeline(projectId, branchName, "merge_request_commented", diggerCommand, mergeRequestIID)
+		mergeRequestID := event.MergeRequest.ID
+		err := TriggerPipeline(projectId, branchName, "merge_request_commented", event.ObjectAttributes.Note, event.ObjectAttributes.DiscussionID, mergeRequestID, mergeRequestIID)
 		if err != nil {
 			return nil, "TriggerPipeline error", err
 		}
 	default:
-
+		fmt.Printf("Skipping '%s' GitLab event\n", eventType)
 	}
 
 	fmt.Println("webhook event parsed successfully")
@@ -101,7 +102,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 	return result, gitlabEvent, nil
 }
 
-func TriggerPipeline(projectId int, branchName string, eventType string, diggerCommand string, mergeRequestIID int) error {
+func TriggerPipeline(projectId int, branchName string, eventType string, diggerCommand string, discussionId string, mergeRequestID int, mergeRequestIID int) error {
 	gitlabToken := os.Getenv("GITLAB_TOKEN")
 	if gitlabToken == "" {
 		return fmt.Errorf("GITLAB_TOKEN has not been set\n")
@@ -110,6 +111,8 @@ func TriggerPipeline(projectId int, branchName string, eventType string, diggerC
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	log.Printf("TriggerPipeline: projectId: %d, branchName: %s, mergeRequestIID:%d, mergeRequestID:%d, eventType: %s, diggerCommand: %s", projectId, branchName, mergeRequestIID, mergeRequestID, eventType, diggerCommand)
 
 	variables := make([]*gitlab.PipelineVariableOptions, 0)
 	variables = append(variables, &gitlab.PipelineVariableOptions{
@@ -132,11 +135,19 @@ func TriggerPipeline(projectId int, branchName string, eventType string, diggerC
 		})
 	}
 
+	if discussionId != "" {
+		variables = append(variables, &gitlab.PipelineVariableOptions{
+			Key:          gitlab.String("DISCUSSION_ID"),
+			Value:        gitlab.String(discussionId),
+			VariableType: gitlab.String("env_var"),
+		})
+	}
+
 	opt := &gitlab.CreatePipelineOptions{Ref: &branchName, Variables: &variables}
 
 	build, r2, err := git.Pipelines.CreatePipeline(projectId, opt)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to create pipeline, %v", err)
 	}
 
 	fmt.Printf("build %v\n", build)
