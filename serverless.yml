@@ -21,4 +21,5 @@ functions:
           private: false
     environment:
       GITLAB_TOKEN: ${ssm:/gitlab-dev-webhook-handler/dev/GITLAB_TOKEN}
+      SECRET_TOKEN: ${ssm:/gitlab-dev-webhook-handler/dev/SECRET_TOKEN}
 

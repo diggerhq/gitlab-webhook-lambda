@@ -11,16 +11,28 @@ import (
 	"strings"
 )
 
+func ConvertMapKeysToLowerCase(m map[string]string) map[string]string {
+	result := make(map[string]string)
+	for k, v := range m {
+		lowerCaseKey := strings.ToLower(k)
+		result[lowerCaseKey] = v
+		//fmt.Printf("old key: %s, new key: %s \n", k, lowerCaseKey)
+	}
+	return result
+}
+
 func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLRequest) (interface{}, string, error) {
+	headers := ConvertMapKeysToLowerCase(lambdaRequest.Headers)
 	// If we have a secret set, we should check if the request matches it.
 	if len(secret) > 0 {
-		signature := lambdaRequest.Headers["x-gitlab-token"]
+		//fmt.Printf("lambda token: %s, request token: %s \n", secret, headers["x-gitlab-token"])
+		signature := headers["x-gitlab-token"]
 		if signature != secret {
 			return nil, "", errors.New("token validation failed")
 		}
 	}
 
-	gitlabEvent := lambdaRequest.Headers["x-gitlab-event"]
+	gitlabEvent := headers["x-gitlab-event"]
 	if strings.TrimSpace(gitlabEvent) == "" {
 		return nil, "", errors.New("missing X-Gitlab-Event Header")
 	}

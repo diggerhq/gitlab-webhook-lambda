@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"os"
 )
 
 func GenerateResponse(Body string, Code int) events.APIGatewayProxyResponse {
@@ -15,7 +16,8 @@ func HandleRequest(_ context.Context, request events.LambdaFunctionURLRequest) (
 	fmt.Printf("Body: %s", request.Body)
 	//fmt.Printf("Headers: %v", request.Headers)
 
-	_, _, err := ParseWebHookJSON("", request)
+	secretToken := os.Getenv("SECRET_TOKEN")
+	_, _, err := ParseWebHookJSON(secretToken, request)
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 	}
