@@ -39,6 +39,16 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 
 	fmt.Printf("gitlabEvent: %s\n", gitlabEvent)
 
+	gitLabClient, err := CreateGitLabClient()
+	if err != nil {
+		return fmt.Errorf("failed to create GitLab client, %v\n", err)
+	}
+
+	currentUser, _, err := gitLabClient.Users.CurrentUser()
+	if err != nil {
+		return fmt.Errorf("failed to get current GitLab user info, %v", err)
+	}
+
 	eventType := gitlab.EventType(gitlabEvent)
 
 	payload := lambdaRequest.Body
@@ -59,12 +69,19 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		branchName := event.ObjectAttributes.SourceBranch
 		mergeRequestIID := event.ObjectAttributes.IID
 		mergeRequestID := event.ObjectAttributes.ID
+
+		//check if Merge Request mergeable
+		isMergeable, err := IsMergeable(gitLabClient, projectId, mergeRequestIID)
+		if err != nil {
+			return fmt.Errorf("failed to parse webhook event: %w\n", err)
+		}
+
 		fmt.Printf("event action: %s\n", event.ObjectAttributes.Action)
 		fmt.Printf("event ObjectKind: %s\n", event.ObjectKind)
 		fmt.Printf("branchName: %s\n", branchName)
 
 		// check if branch exist
-		branchExists, err := checkIfBranchExist(projectId, branchName)
+		branchExists, err := checkIfBranchExist(gitLabClient, projectId, branchName)
 		if err != nil {
 			return err
 		}
@@ -77,49 +94,58 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 			}
 		}
 
+		var eventType string
 		switch event.ObjectAttributes.Action {
 		case "open":
-			err := TriggerPipeline(projectId, branchName, "merge_request_opened", "", "", mergeRequestID, mergeRequestIID)
-			if err != nil {
-				return err
-			}
+			eventType = "merge_request_opened"
 		case "close":
-			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "", "", mergeRequestID, mergeRequestIID)
-			if err != nil {
-				return err
-			}
+			eventType = "merge_request_closed"
 		case "reopen":
-			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "", "", mergeRequestID, mergeRequestIID)
-			if err != nil {
-				return err
-			}
+			eventType = "merge_request_reopened"
 		case "update":
-			err := TriggerPipeline(projectId, branchName, "merge_request_updated", "", "", mergeRequestID, mergeRequestIID)
-			if err != nil {
-				return err
-			}
+			eventType = "merge_request_updated"
+			// this event will be handled by GitLab in pipeline, no need to trigger pipeline from lambda
+			fmt.Printf("Ignoring merge request update event notification for mergeRequestIID: %d\n", mergeRequestIID)
+			return nil
+
 		case "approved":
+			eventType = "merge_request_approved"
 		case "unapproved":
+			eventType = "merge_request_unapproved"
 		case "approval":
+			eventType = "merge_request_approval"
 		case "unapproval":
+			eventType = "merge_request_unapproval"
 		case "merge":
-			err := TriggerPipeline(projectId, branchName, "merge_request_closed", "", "", mergeRequestID, mergeRequestIID)
-			if err != nil {
-				return err
-			}
+			eventType = "merge_request_merge"
 
 		default:
 			return fmt.Errorf("unknown gitlab event action %s\n", event.ObjectAttributes.Action)
 		}
+		err = TriggerPipeline(projectId, branchName, eventType, "", "", mergeRequestID, mergeRequestIID, isMergeable)
+		if err != nil {
+			return err
+		}
 	case gitlab.EventTypeNote:
 		event := result.(*gitlab.MergeCommentEvent)
-		//diggerCommand := event.ObjectAttributes.Note
 		fmt.Printf("note event: %v\n", event)
+
+		if event.User.ID == currentUser.ID {
+			// do nothing if comment has been created by the same webhook user
+			return nil
+		}
 		projectId := event.ProjectID
 		branchName := event.MergeRequest.SourceBranch
 		mergeRequestIID := event.MergeRequest.IID
 		mergeRequestID := event.MergeRequest.ID
-		err := TriggerPipeline(projectId, branchName, "merge_request_commented", event.ObjectAttributes.Note, event.ObjectAttributes.DiscussionID, mergeRequestID, mergeRequestIID)
+
+		//check if Merge Request mergeable
+		isMergeable, err := IsMergeable(gitLabClient, projectId, mergeRequestIID)
+		if err != nil {
+			return fmt.Errorf("failed to parse webhook event: %w\n", err)
+		}
+
+		err = TriggerPipeline(projectId, branchName, "merge_request_commented", event.ObjectAttributes.Note, event.ObjectAttributes.DiscussionID, mergeRequestID, mergeRequestIID, isMergeable)
 		if err != nil {
 			return err
 		}
@@ -132,18 +158,24 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 	return nil
 }
 
-func TriggerPipeline(projectId int, branchName string, eventType string, diggerCommand string, discussionId string, mergeRequestID int, mergeRequestIID int) error {
+func TriggerPipeline(projectId int, branchName string, eventType string, diggerCommand string, discussionId string, mergeRequestID int, mergeRequestIID int, isMergeable bool) error {
 	git, err := CreateGitLabClient()
 	if err != nil {
 		return err
 	}
 
-	log.Printf("TriggerPipeline: projectId: %d, branchName: %s, mergeRequestIID:%d, mergeRequestID:%d, eventType: %s, diggerCommand: %s", projectId, branchName, mergeRequestIID, mergeRequestID, eventType, diggerCommand)
+	log.Printf("TriggerPipeline: projectId: %d, branchName: %s, mergeRequestIID:%d, mergeRequestID:%d, eventType: %s, discussionId: %s, diggerCommand: %s", projectId, branchName, mergeRequestIID, mergeRequestID, eventType, discussionId, diggerCommand)
 
 	variables := make([]*gitlab.PipelineVariableOptions, 0)
 	variables = append(variables, &gitlab.PipelineVariableOptions{
 		Key:          gitlab.String("MERGE_REQUEST_EVENT_NAME"),
 		Value:        gitlab.String(eventType),
+		VariableType: gitlab.String("env_var"),
+	})
+
+	variables = append(variables, &gitlab.PipelineVariableOptions{
+		Key:          gitlab.String("IS_MERGEABLE"),
+		Value:        gitlab.String(strconv.FormatBool(isMergeable)),
 		VariableType: gitlab.String("env_var"),
 	})
 
@@ -173,7 +205,11 @@ func TriggerPipeline(projectId int, branchName string, eventType string, diggerC
 
 	opt := &gitlab.CreatePipelineOptions{Ref: &branchName, Variables: &variables}
 
-	fmt.Printf("trigger gitlab pipeline. branch: %s, variables: %v", branchName, variables)
+	fmt.Printf("trigger gitlab pipeline. branch: %s\n", branchName)
+	fmt.Println("variables: ")
+	for _, v := range variables {
+		fmt.Printf("key: %s, value: %s\n", *v.Key, *v.Value)
+	}
 
 	build, _, err := git.Pipelines.CreatePipeline(projectId, opt)
 	if err != nil {
@@ -223,18 +259,7 @@ func PublishComment(projectID int, mergeRequestIID int, comment string) error {
 	return nil
 }
 
-func checkIfBranchExist(projectID int, branchName string) (bool, error) {
-	gitLabClient, err := CreateGitLabClient()
-	if err != nil {
-		return false, err
-	}
-
-	user, _, err := gitLabClient.Users.CurrentUser()
-	if err != nil {
-		return false, fmt.Errorf("failed to get current GitLab user info, %v", err)
-	}
-	fmt.Printf("current GitLab user: %s\n", user.Name)
-
+func checkIfBranchExist(gitLabClient *gitlab.Client, projectID int, branchName string) (bool, error) {
 	fmt.Printf("projectID: %d, branchName: %s\n", projectID, branchName)
 
 	branch, response, err := gitLabClient.Branches.GetBranch(projectID, branchName)
@@ -250,4 +275,40 @@ func checkIfBranchExist(projectID int, branchName string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func GetChangedFiles(gitLabClient *gitlab.Client, projectId int, mergeRequestId int) ([]string, error) {
+	opt := &gitlab.GetMergeRequestChangesOptions{}
+
+	log.Printf("mergeRequestId: %d", mergeRequestId)
+	mergeRequestChanges, _, err := gitLabClient.MergeRequests.GetMergeRequestChanges(projectId, mergeRequestId, opt)
+	if err != nil {
+		log.Fatalf("error getting gitlab's merge request: %v", err)
+	}
+
+	fileNames := make([]string, len(mergeRequestChanges.Changes))
+
+	for i, change := range mergeRequestChanges.Changes {
+		fileNames[i] = change.NewPath
+	}
+	return fileNames, nil
+}
+
+func IsMergeable(gitLabClient *gitlab.Client, projectId int, mergeRequestIID int) (bool, error) {
+
+	opt := &gitlab.GetMergeRequestsOptions{}
+
+	mergeRequest, _, err := gitLabClient.MergeRequests.GetMergeRequest(projectId, mergeRequestIID, opt)
+
+	if err != nil {
+		fmt.Printf("Failed to get a MergeRequest: %d, %v \n", mergeRequestIID, err)
+		print(err.Error())
+	}
+
+	fmt.Printf("mergeRequest.DetailedMergeStatus: %s\n", mergeRequest.DetailedMergeStatus)
+
+	if mergeRequest.DetailedMergeStatus == "mergeable" {
+		return true, nil
+	}
+	return false, nil
 }
