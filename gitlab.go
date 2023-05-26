@@ -86,7 +86,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 			return err
 		}
 		// if branch doesn't exist, digger will not be able to do anything, so we can log an error as a comment to pull request
-		if !branchExists {
+		if !branchExists && eventType != "merge" {
 			fmt.Printf("Specified branch: %s doesn't exist.\n", branchName)
 			err = PublishComment(projectId, mergeRequestIID, fmt.Sprintf("Failed to trigger pipeline. Specified branch: %s doesn't exist.", branchName))
 			if err != nil {
@@ -118,6 +118,9 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 			eventType = "merge_request_unapproval"
 		case "merge":
 			eventType = "merge_request_merge"
+			// this event will be handled by GitLab in pipeline, no need to trigger pipeline from lambda
+			fmt.Printf("Ignoring merge request merged event notification for mergeRequestIID: %d\n", mergeRequestIID)
+			return nil
 
 		default:
 			return fmt.Errorf("unknown gitlab event action %s\n", event.ObjectAttributes.Action)
@@ -128,10 +131,18 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		}
 	case gitlab.EventTypeNote:
 		event := result.(*gitlab.MergeCommentEvent)
+		comment := event.ObjectAttributes.Note
 		fmt.Printf("note event: %v\n", event)
 
 		if event.User.ID == currentUser.ID {
+			fmt.Println("Webhook triggered by lambda, do nothing.")
 			// do nothing if comment has been created by the same webhook user
+			return nil
+		}
+
+		if !strings.HasPrefix(comment, "digger") {
+			// ignoring any comments that do not start with digger
+			fmt.Println("Comment is not a digger command, ignoring.")
 			return nil
 		}
 		projectId := event.ProjectID
@@ -145,7 +156,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 			return fmt.Errorf("failed to parse webhook event: %w\n", err)
 		}
 
-		err = TriggerPipeline(projectId, branchName, "merge_request_commented", event.ObjectAttributes.Note, event.ObjectAttributes.DiscussionID, mergeRequestID, mergeRequestIID, isMergeable)
+		err = TriggerPipeline(projectId, branchName, "merge_request_commented", comment, event.ObjectAttributes.DiscussionID, mergeRequestID, mergeRequestIID, isMergeable)
 		if err != nil {
 			return err
 		}
@@ -245,17 +256,6 @@ func PublishComment(projectID int, mergeRequestIID int, comment string) error {
 		fmt.Printf("Failed to publish a comment. %v\n", err)
 		return err
 	}
-
-	//commentOpt := &gitlab.AddMergeRequestDiscussionNoteOptions{Body: &comment}
-	/*
-		fmt.Printf("PublishComment projectId: %d, mergeRequestIID: %d, discussionID: %s, comment: %s \n", projectID, mergeRequestIID, discussionID, comment)
-
-		_, _, err = gitLabClient.Discussions.AddMergeRequestDiscussionNote(projectID, mergeRequestIID, discussionID, commentOpt)
-		if err != nil {
-			fmt.Printf("Failed to publish a comment. %v\n", err)
-			return err
-		}
-	*/
 	return nil
 }
 
