@@ -86,8 +86,8 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 			return err
 		}
 		// if branch doesn't exist, digger will not be able to do anything, so we can log an error as a comment to pull request
-		if !branchExists && eventType != "merge" {
-			fmt.Printf("Specified branch: %s doesn't exist.\n", branchName)
+		if !branchExists && event.ObjectAttributes.Action != "merge" {
+			fmt.Printf("Specified branch: %s doesn't exist. eventType: %s \n", branchName, eventType)
 			err = PublishComment(projectId, mergeRequestIID, fmt.Sprintf("Failed to trigger pipeline. Specified branch: %s doesn't exist.", branchName))
 			if err != nil {
 				return err
@@ -118,9 +118,12 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 			eventType = "merge_request_unapproval"
 		case "merge":
 			eventType = "merge_request_merge"
+			// when merge request merged, original branch could be deleted, so we need to run it in target branch
+			branchName = event.ObjectAttributes.TargetBranch
+
 			// this event will be handled by GitLab in pipeline, no need to trigger pipeline from lambda
-			fmt.Printf("Ignoring merge request merged event notification for mergeRequestIID: %d\n", mergeRequestIID)
-			return nil
+			//fmt.Printf("Ignoring merge request merged event notification for mergeRequestIID: %d\n", mergeRequestIID)
+			//return nil
 
 		default:
 			return fmt.Errorf("unknown gitlab event action %s\n", event.ObjectAttributes.Action)
