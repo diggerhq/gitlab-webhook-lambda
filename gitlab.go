@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
@@ -39,14 +40,9 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 
 	fmt.Printf("gitlabEvent: %s\n", gitlabEvent)
 
-	gitLabClient, err := CreateGitLabClient()
+	gitLabClients, err := CreateGitLabClient()
 	if err != nil {
 		return fmt.Errorf("failed to create GitLab client, %v\n", err)
-	}
-
-	currentUser, _, err := gitLabClient.Users.CurrentUser()
-	if err != nil {
-		return fmt.Errorf("failed to get current GitLab user info, %v", err)
 	}
 
 	eventType := gitlab.EventType(gitlabEvent)
@@ -70,8 +66,14 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		mergeRequestIID := event.ObjectAttributes.IID
 		mergeRequestID := event.ObjectAttributes.ID
 
+		currentUser, _, err := gitLabClients[projectId].Users.CurrentUser()
+		if err != nil {
+			return fmt.Errorf("failed to get current GitLab user info, %v", err)
+		}
+		fmt.Printf("Current GitLab user id: %d\n", currentUser.ID)
+
 		//check if Merge Request mergeable
-		isMergeable, err := IsMergeable(gitLabClient, projectId, mergeRequestIID)
+		isMergeable, err := IsMergeable(gitLabClients[projectId], projectId, mergeRequestIID)
 		if err != nil {
 			return fmt.Errorf("failed to parse webhook event: %w\n", err)
 		}
@@ -81,7 +83,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 		fmt.Printf("branchName: %s\n", branchName)
 
 		// check if branch exist
-		branchExists, err := checkIfBranchExist(gitLabClient, projectId, branchName)
+		branchExists, err := checkIfBranchExist(gitLabClients[projectId], projectId, branchName)
 		if err != nil {
 			return err
 		}
@@ -135,7 +137,14 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 	case gitlab.EventTypeNote:
 		event := result.(*gitlab.MergeCommentEvent)
 		comment := event.ObjectAttributes.Note
+		projectId := event.ProjectID
 		fmt.Printf("note event: %v\n", event)
+
+		currentUser, _, err := gitLabClients[projectId].Users.CurrentUser()
+		if err != nil {
+			return fmt.Errorf("failed to get current GitLab user info, %v", err)
+		}
+		fmt.Printf("Current GitLab user id: %d\n", currentUser.ID)
 
 		if event.User.ID == currentUser.ID {
 			fmt.Println("Webhook triggered by lambda, do nothing.")
@@ -148,13 +157,12 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 			fmt.Println("Comment is not a digger command, ignoring.")
 			return nil
 		}
-		projectId := event.ProjectID
 		branchName := event.MergeRequest.SourceBranch
 		mergeRequestIID := event.MergeRequest.IID
 		mergeRequestID := event.MergeRequest.ID
 
 		//check if Merge Request mergeable
-		isMergeable, err := IsMergeable(gitLabClient, projectId, mergeRequestIID)
+		isMergeable, err := IsMergeable(gitLabClients[projectId], projectId, mergeRequestIID)
 		if err != nil {
 			return fmt.Errorf("failed to parse webhook event: %w\n", err)
 		}
@@ -173,10 +181,12 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 }
 
 func TriggerPipeline(projectId int, branchName string, eventType string, diggerCommand string, discussionId string, mergeRequestID int, mergeRequestIID int, isMergeable bool) error {
-	git, err := CreateGitLabClient()
+	gitLabClients, err := CreateGitLabClient()
 	if err != nil {
 		return err
 	}
+
+	gitLabClient := gitLabClients[projectId]
 
 	log.Printf("TriggerPipeline: projectId: %d, branchName: %s, mergeRequestIID:%d, mergeRequestID:%d, eventType: %s, discussionId: %s, diggerCommand: %s", projectId, branchName, mergeRequestIID, mergeRequestID, eventType, discussionId, diggerCommand)
 
@@ -225,7 +235,7 @@ func TriggerPipeline(projectId int, branchName string, eventType string, diggerC
 		fmt.Printf("key: %s, value: %s\n", *v.Key, *v.Value)
 	}
 
-	build, _, err := git.Pipelines.CreatePipeline(projectId, opt)
+	build, _, err := gitLabClient.Pipelines.CreatePipeline(projectId, opt)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline, %v", err)
 	}
@@ -234,23 +244,56 @@ func TriggerPipeline(projectId int, branchName string, eventType string, diggerC
 	return nil
 }
 
-func CreateGitLabClient() (*gitlab.Client, error) {
-	gitlabToken := os.Getenv("GITLAB_TOKEN")
-	if gitlabToken == "" {
-		return nil, fmt.Errorf("GITLAB_TOKEN has not been set\n")
+func CreateGitLabClient() (map[int]*gitlab.Client, error) {
+	// GITLAB_TOKENS is a json dict of tokens, example:
+	//[{"46465722": "glpat-121211"}, {"44723537": "glpat-2323232323"}]
+
+	gitlabTokenJson := os.Getenv("GITLAB_TOKENS")
+
+	if gitlabTokenJson == "" {
+		return nil, fmt.Errorf("GITLAB_TOKENS has not been set\n")
 	}
-	client, err := gitlab.NewClient(gitlabToken)
+
+	var result map[int]*gitlab.Client
+
+	var tokens []map[string]string
+	err := json.Unmarshal([]byte(gitlabTokenJson), &tokens)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create GitLab client, %v, \n", err)
+		panic(err)
 	}
-	return client, nil
+	result = make(map[int]*gitlab.Client, len(tokens))
+
+	for i := range tokens {
+		if tokens[i]["project"] == "" {
+			return nil, fmt.Errorf("Project Id has not been set in GITLAB_TOKENS\n")
+		}
+
+		if tokens[i]["token"] == "" {
+			return nil, fmt.Errorf("GitLab token has not been set in GITLAB_TOKENS\n")
+		}
+		token := tokens[i]["token"]
+		projectId, err := strconv.Atoi(tokens[i]["project"])
+		if err != nil {
+			return nil, fmt.Errorf("Failed to parse projectId for %s\n", tokens[i]["project"])
+		}
+
+		client, err := gitlab.NewClient(token)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GitLab client for project %d, %v, \n", projectId, err)
+		}
+		result[projectId] = client
+	}
+
+	return result, nil
 }
 
 func PublishComment(projectID int, mergeRequestIID int, comment string) error {
-	gitLabClient, err := CreateGitLabClient()
+	gitLabClients, err := CreateGitLabClient()
 	if err != nil {
 		return err
 	}
+
+	gitLabClient := gitLabClients[projectID]
 
 	opt := &gitlab.CreateMergeRequestDiscussionOptions{Body: &comment}
 

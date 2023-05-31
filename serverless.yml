@@ -20,6 +20,6 @@ functions:
           method: post
           private: false
     environment:
-      GITLAB_TOKEN: ${ssm:/gitlab-dev-webhook-handler/dev/GITLAB_TOKEN}
+      GITLAB_TOKENS: ${ssm:/gitlab-dev-webhook-handler/dev/GITLAB_TOKENS}
       SECRET_TOKEN: ${ssm:/gitlab-dev-webhook-handler/dev/SECRET_TOKEN}
 
