@@ -1,4 +1,4 @@
- Configuring and Deploying AWS Lambda: Step-by-Step Guide 
+## Configuring and Deploying AWS Lambda: Step-by-Step Guide 
 
 
 1. Fork and clone this repo:[ https://github.com/diggerhq/gitlab-webhook-lambda](https://github.com/diggerhq/gitlab-webhook-lambda).
@@ -8,3 +8,7 @@
 5. Make sure that your AWS credentials are properly configured in the command-line interface (CLI). This ensures that you have the necessary permissions to deploy the Lambda function.
 6. Run the command `npm run build` in the root directory of the cloned repository. This command will build the necessary artifacts for the Lambda function.
 7. Finally, run the command `npm run deploy` in the same root directory. This will initiate the deployment process for the Lambda function using the configuration specified in the `serverless.yml` file.
+
+## Notes:
+
+Group Access Tokens (https://docs.gitlab.com/ee/user/group/settings/group_access_tokens.html) are not supported at the moment, only Project Access Tokens
