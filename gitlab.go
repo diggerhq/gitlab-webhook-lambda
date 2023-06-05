@@ -246,7 +246,7 @@ func TriggerPipeline(projectId int, branchName string, eventType string, diggerC
 
 func CreateGitLabClient() (map[int]*gitlab.Client, error) {
 	// GITLAB_TOKENS is a json dict of tokens, example:
-	//[{"46465722": "glpat-121211"}, {"44723537": "glpat-2323232323"}]
+	//[{"project": "46465722", "token": "glpat-121211"}, {"project": "44723537": "token": "glpat-2323232323"}]
 
 	gitlabTokenJson := os.Getenv("GITLAB_TOKENS")
 
