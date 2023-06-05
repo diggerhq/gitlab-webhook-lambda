@@ -12,7 +12,7 @@
 ## Notes:
 
 - Group Access Tokens (https://docs.gitlab.com/ee/user/group/settings/group_access_tokens.html) are not supported at the moment, only Project Access Tokens (https://docs.gitlab.com/ee/user/project/settings/project_access_tokens.html)
-- One Lambda can handle webhooks only for one GitLab Project (repo) , because only one GitLab Access Token is stored in GITLAB_TOKEN
+- One Lambda can handle webhooks for multiple GitLab Projects (repos)
 - GITLAB_TOKEN is a JSON with a list of maps with project id and token. For example: 
 ```
 [
