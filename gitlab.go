@@ -68,7 +68,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 
 		currentUser, _, err := gitLabClients[projectId].Users.CurrentUser()
 		if err != nil {
-			return fmt.Errorf("failed to get current GitLab user info, %v", err)
+			return fmt.Errorf("failed to get current GitLab user info, projectId: %v, %v", projectId, err)
 		}
 		fmt.Printf("Current GitLab user id: %d\n", currentUser.ID)
 
@@ -142,7 +142,7 @@ func ParseWebHookJSON(secret string, lambdaRequest events.LambdaFunctionURLReque
 
 		currentUser, _, err := gitLabClients[projectId].Users.CurrentUser()
 		if err != nil {
-			return fmt.Errorf("failed to get current GitLab user info, %v", err)
+			return fmt.Errorf("failed to get current GitLab user info, projectId: %v, %v", projectId, err)
 		}
 		fmt.Printf("Current GitLab user id: %d\n", currentUser.ID)
 
@@ -259,7 +259,8 @@ func CreateGitLabClient() (map[int]*gitlab.Client, error) {
 	var tokens []map[string]string
 	err := json.Unmarshal([]byte(gitlabTokenJson), &tokens)
 	if err != nil {
-		panic(err)
+		fmt.Printf("failed to unmarshal gitlabTokenJson, %v", err)
+		return nil, err
 	}
 	result = make(map[int]*gitlab.Client, len(tokens))
 

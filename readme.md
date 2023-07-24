@@ -20,3 +20,9 @@
     {"project": "44723537": "token": "glpat-2323232323"}
 ]
 ```
+
+## to deploy
+```
+npm run build
+serverless deploy
+```

@@ -17,8 +17,10 @@ func HandleRequest(_ context.Context, request events.LambdaFunctionURLRequest) (
 
 	secretToken := os.Getenv("SECRET_TOKEN")
 	err := ParseWebHookJSON(secretToken, request)
+
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
+		return GenerateResponse(err.Error(), 500), nil
 	}
 	return GenerateResponse("", 200), nil
 }
